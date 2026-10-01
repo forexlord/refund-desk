@@ -1,0 +1,69 @@
+# One command: `docker compose up --build`
+# Frontend: http://localhost:3000  ·  API: http://localhost:3001/api/health
+# Put ANTHROPIC_API_KEY in a .env file next to this file (see .env.example).
+# Without a key, the app still runs, using a keyword classifier and reply templates.
+
+services:
+  db:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: refunds
+      POSTGRES_PASSWORD: refunds
+      POSTGRES_DB: refunds
+    volumes:
+      # Schema + synthetic CRM seed run automatically on first start.
+      - ./db:/docker-entrypoint-initdb.d:ro
+      - db-data:/var/lib/postgresql/data
+    ports:
+      - "5433:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U refunds -d refunds"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  # One-off: issues a unique password to every seeded account that has none, and prints them once.
+  # Read them with `docker compose logs provision`. Existing credentials are never changed.
+  provision:
+    build: ./backend
+    command: ["node", "dist/provision.js"]
+    environment:
+      DATABASE_URL: postgres://refunds:refunds@db:5432/refunds
+    depends_on:
+      db:
+        condition: service_healthy
+
+  backend:
+    build: ./backend
+    environment:
+      PORT: 3001
+      DATABASE_URL: postgres://refunds:refunds@db:5432/refunds
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-}  # empty → default in backend/src/config/app-config.ts
+      AI_TIMEOUT_MS: ${AI_TIMEOUT_MS:-20000}
+      SESSION_SECRET: ${SESSION_SECRET:-}  # empty → random per start (sessions reset on restart)
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}  # set true behind HTTPS
+      DEMO_ACCOUNTS: ${DEMO_ACCOUNTS:-true}  # demo: sign-in pickers fill the synthetic accounts' passwords
+      EXPOSE_OTP: ${EXPOSE_OTP:-true}  # demo: return the agent's sign-in code in the API response (no email provider)
+      APP_URL: ${APP_URL:-http://localhost:3000}  # used in password-reset links
+      CORS_ORIGIN: http://localhost:3000
+    depends_on:
+      db:
+        condition: service_healthy
+      provision:
+        condition: service_completed_successfully
+    ports:
+      - "3001:3001"
+
+  frontend:
+    build: ./frontend
+    environment:
+      BACKEND_URL: http://backend:3001
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "3000:3000"
+
+volumes:
+  db-data:
