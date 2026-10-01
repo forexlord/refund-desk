@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.next/
+.env
+*.log
+next-env.d.ts
+*.tsbuildinfo
+docs_do_not_commit/
